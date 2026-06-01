@@ -18,6 +18,7 @@ npm install
 supabase/add-participant-pins.sql
 supabase/2026-rules-and-copa-json.sql
 supabase/group-positions-and-new-knockout-points.sql
+supabase/soft-delete-participants.sql
 ```
 
 4. Copie `.env.local.example` para `.env.local` e preencha:
@@ -38,7 +39,7 @@ npm run dev
 ## Fluxos
 
 - `/`: usuario informa nome + PIN, salva placares da fase de grupos, aposta selecoes por fase no mata-mata e ve ranking.
-- `/admin`: admin informa a senha de `ADMIN_PASSWORD`, cadastra participantes/PINs, atualiza resultados e marca classificados reais do mata-mata.
+- `/admin`: admin informa a senha de `ADMIN_PASSWORD`, cadastra participantes/PINs, exclui participantes logicamente, atualiza resultados e marca classificados reais do mata-mata.
 
 ## Pontuacao
 

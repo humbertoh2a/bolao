@@ -30,7 +30,8 @@ export async function GET(request: Request) {
   const supabase = createSupabaseAdmin();
   const { data, error } = await supabase
     .from("participants")
-    .select("id, name, created_at")
+    .select("id, name, created_at, deleted_at")
+    .order("deleted_at", { ascending: true, nullsFirst: true })
     .order("name", { ascending: true });
 
   if (error) {
@@ -57,8 +58,9 @@ export async function POST(request: Request) {
     .insert({
       name: input.cleanName,
       pin_hash: hashPin(input.cleanPin),
+      deleted_at: null,
     })
-    .select("id, name, created_at")
+    .select("id, name, created_at, deleted_at")
     .single();
 
   if (error) {
@@ -74,23 +76,66 @@ export async function PATCH(request: Request) {
   }
 
   const body = await request.json();
-  const input = validateParticipantInput(body.name, body.pin);
   if (!body.id) {
     return NextResponse.json({ error: "Participante obrigatorio." }, { status: 400 });
   }
+
+  const supabase = createSupabaseAdmin();
+
+  if (body.restore === true) {
+    const { data, error } = await supabase
+      .from("participants")
+      .update({ deleted_at: null })
+      .eq("id", body.id)
+      .select("id, name, created_at, deleted_at")
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ participant: data });
+  }
+
+  const input = validateParticipantInput(body.name, body.pin);
   if ("error" in input) {
     return NextResponse.json({ error: input.error }, { status: 400 });
   }
 
-  const supabase = createSupabaseAdmin();
   const { data, error } = await supabase
     .from("participants")
     .update({
       name: input.cleanName,
       pin_hash: hashPin(input.cleanPin),
+      deleted_at: null,
     })
     .eq("id", body.id)
-    .select("id, name, created_at")
+    .select("id, name, created_at, deleted_at")
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ participant: data });
+}
+
+export async function DELETE(request: Request) {
+  if (!isAuthorized(request)) {
+    return NextResponse.json({ error: "Nao autorizado." }, { status: 401 });
+  }
+
+  const body = await request.json();
+  if (!body.id) {
+    return NextResponse.json({ error: "Participante obrigatorio." }, { status: 400 });
+  }
+
+  const supabase = createSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("participants")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", body.id)
+    .select("id, name, created_at, deleted_at")
     .single();
 
   if (error) {

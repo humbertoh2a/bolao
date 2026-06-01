@@ -11,6 +11,7 @@ type Participant = {
   id: string;
   name: string;
   created_at: string;
+  deleted_at: string | null;
 };
 type ActualDraft = Record<KnockoutStage, string[]>;
 type GroupActualDraft = Record<string, { first: string; second: string; saving?: boolean }>;
@@ -184,6 +185,50 @@ export function AdminApp() {
     setParticipantPin("");
     setEditingParticipantId(null);
     setMessage(editingParticipantId ? "Participante atualizado." : "Participante criado.");
+    await loadParticipants();
+  }
+
+  async function deleteParticipant(participant: Participant) {
+    if (!window.confirm(`Excluir ${participant.name} da lista ativa? As apostas serao preservadas.`)) {
+      return;
+    }
+
+    const response = await fetch("/api/admin/participants", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-password": password,
+      },
+      body: JSON.stringify({ id: participant.id }),
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      setMessage(payload.error ?? "Nao foi possivel excluir participante.");
+      return;
+    }
+
+    setMessage("Participante removido da lista ativa. Apostas preservadas.");
+    await loadParticipants();
+  }
+
+  async function restoreParticipant(participant: Participant) {
+    const response = await fetch("/api/admin/participants", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-password": password,
+      },
+      body: JSON.stringify({ id: participant.id, restore: true }),
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      setMessage(payload.error ?? "Nao foi possivel reativar participante.");
+      return;
+    }
+
+    setMessage("Participante reativado.");
     await loadParticipants();
   }
 
@@ -386,23 +431,54 @@ export function AdminApp() {
               ) : null}
             </div>
           </form>
-          <div className="mt-5 grid gap-2">
+          <div className="mt-5 grid max-h-[420px] gap-2 overflow-y-auto pr-1">
             {participants.length === 0 ? (
               <p className="text-sm text-stone-500">Cadastre participantes e entregue o PIN para cada pessoa.</p>
             ) : (
               participants.map((participant) => (
-                <div key={participant.id} className="flex items-center justify-between gap-3 rounded-md border border-stone-200 p-3">
-                  <span className="text-sm font-semibold">{participant.name}</span>
-                  <button
-                    onClick={() => {
-                      setEditingParticipantId(participant.id);
-                      setParticipantName(participant.name);
-                      setParticipantPin("");
-                    }}
-                    className="rounded-md border border-stone-300 px-3 py-2 text-xs font-semibold"
-                  >
-                    Novo PIN
-                  </button>
+                <div
+                  key={participant.id}
+                  className={`rounded-md border p-3 ${
+                    participant.deleted_at ? "border-stone-200 bg-stone-50 text-stone-500" : "border-stone-200"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <span className="text-sm font-semibold">{participant.name}</span>
+                      {participant.deleted_at ? (
+                        <p className="text-xs text-stone-500">Excluido logicamente</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {participant.deleted_at ? (
+                      <button
+                        onClick={() => restoreParticipant(participant)}
+                        className="rounded-md border border-emerald-700 px-3 py-2 text-xs font-semibold text-emerald-800"
+                      >
+                        Reativar
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => {
+                            setEditingParticipantId(participant.id);
+                            setParticipantName(participant.name);
+                            setParticipantPin("");
+                          }}
+                          className="rounded-md border border-stone-300 px-3 py-2 text-xs font-semibold"
+                        >
+                          Novo PIN
+                        </button>
+                        <button
+                          onClick={() => deleteParticipant(participant)}
+                          className="rounded-md border border-red-200 px-3 py-2 text-xs font-semibold text-red-700"
+                        >
+                          Excluir
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               ))
             )}

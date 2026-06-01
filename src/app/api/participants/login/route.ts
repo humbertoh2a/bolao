@@ -16,6 +16,7 @@ export async function POST(request: Request) {
     .from("participants")
     .select("id, name, pin_hash")
     .ilike("name", cleanName)
+    .is("deleted_at", null)
     .limit(1)
     .maybeSingle();
 

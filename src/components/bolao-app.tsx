@@ -4,10 +4,19 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { knockoutStages, predictionLockAt } from "@/lib/knockout";
 import { supabase } from "@/lib/supabase-browser";
-import type { KnockoutPrediction, KnockoutStage, Match, Prediction, RankingRow, Team } from "@/lib/types";
+import type {
+  GroupPositionPrediction,
+  KnockoutPrediction,
+  KnockoutStage,
+  Match,
+  Prediction,
+  RankingRow,
+  Team,
+} from "@/lib/types";
 
 type PredictionDraft = Record<string, { home: string; away: string; saving?: boolean }>;
 type KnockoutDraft = Record<KnockoutStage, string[]>;
+type GroupPositionDraft = Record<string, { first: string; second: string; saving?: boolean }>;
 
 const participantStorageKey = "bolao:participant";
 
@@ -45,6 +54,16 @@ function groupMatches(matches: Match[]) {
   }, {});
 }
 
+function groupTeams(matches: Match[]) {
+  return matches.reduce<Record<string, string[]>>((acc, match) => {
+    if (!match.group_name) return acc;
+    acc[match.group_name] = Array.from(
+      new Set([...(acc[match.group_name] ?? []), match.home_team, match.away_team]),
+    ).sort();
+    return acc;
+  }, {});
+}
+
 export function BolaoApp() {
   const [participant, setParticipant] = useState<{ id: string; name: string } | null>(null);
   const [name, setName] = useState("");
@@ -53,6 +72,7 @@ export function BolaoApp() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [ranking, setRanking] = useState<RankingRow[]>([]);
   const [drafts, setDrafts] = useState<PredictionDraft>({});
+  const [groupPositionDrafts, setGroupPositionDrafts] = useState<GroupPositionDraft>({});
   const [knockoutDrafts, setKnockoutDrafts] = useState<KnockoutDraft>(emptyKnockoutDraft);
   const [savingStage, setSavingStage] = useState<KnockoutStage | null>(null);
   const [loading, setLoading] = useState(true);
@@ -64,6 +84,7 @@ export function BolaoApp() {
     [matches],
   );
   const groupedMatches = useMemo(() => groupMatches(groupStageMatches), [groupStageMatches]);
+  const teamsByGroup = useMemo(() => groupTeams(groupStageMatches), [groupStageMatches]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -104,13 +125,18 @@ export function BolaoApp() {
   }
 
   async function loadParticipantPredictions(participantId: string) {
-    const [{ data: groupData, error: groupError }, { data: knockoutData, error: knockoutError }] =
+    const [
+      { data: groupData, error: groupError },
+      { data: positionData, error: positionError },
+      { data: knockoutData, error: knockoutError },
+    ] =
       await Promise.all([
         supabase.from("predictions").select("*").eq("participant_id", participantId),
+        supabase.from("group_position_predictions").select("*").eq("participant_id", participantId),
         supabase.from("knockout_predictions").select("*").eq("participant_id", participantId),
       ]);
 
-    if (groupError || knockoutError) {
+    if (groupError || positionError || knockoutError) {
       setMessage("Nao foi possivel carregar seus palpites.");
       return;
     }
@@ -123,6 +149,16 @@ export function BolaoApp() {
       };
     });
     setDrafts(nextDrafts);
+
+    const nextGroupPositionDrafts: GroupPositionDraft = {};
+    ((positionData ?? []) as GroupPositionPrediction[]).forEach((prediction) => {
+      const current = nextGroupPositionDrafts[prediction.group_name] ?? { first: "", second: "" };
+      nextGroupPositionDrafts[prediction.group_name] = {
+        ...current,
+        [prediction.position === 1 ? "first" : "second"]: prediction.team_name,
+      };
+    });
+    setGroupPositionDrafts(nextGroupPositionDrafts);
 
     const nextKnockoutDrafts = knockoutStages.reduce<KnockoutDraft>((acc, stage) => {
       acc[stage.key] = [];
@@ -228,6 +264,51 @@ export function BolaoApp() {
     await loadPublicData();
   }
 
+  async function saveGroupPosition(groupName: string) {
+    if (!participant) return;
+    const draft = groupPositionDrafts[groupName] ?? { first: "", second: "" };
+
+    if (!draft.first || !draft.second) {
+      setMessage("Escolha 1º e 2º colocado do grupo.");
+      return;
+    }
+
+    if (draft.first === draft.second) {
+      setMessage("1º e 2º colocados precisam ser selecoes diferentes.");
+      return;
+    }
+
+    setGroupPositionDrafts((current) => ({
+      ...current,
+      [groupName]: { ...draft, saving: true },
+    }));
+
+    const response = await fetch("/api/predictions/group-positions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        participant_id: participant.id,
+        group_name: groupName,
+        first_place: draft.first,
+        second_place: draft.second,
+      }),
+    });
+    const payload = await response.json();
+
+    setGroupPositionDrafts((current) => ({
+      ...current,
+      [groupName]: { ...draft, saving: false },
+    }));
+
+    if (!response.ok) {
+      setMessage(payload.error ?? "Nao foi possivel salvar classificados do grupo.");
+      return;
+    }
+
+    setMessage("Classificacao do grupo salva.");
+    await loadPublicData();
+  }
+
   function toggleKnockoutTeam(stage: KnockoutStage, teamName: string) {
     const stageConfig = knockoutStages.find((item) => item.key === stage);
     if (!stageConfig) return;
@@ -300,6 +381,7 @@ export function BolaoApp() {
                   localStorage.removeItem(participantStorageKey);
                   setParticipant(null);
                   setDrafts({});
+                  setGroupPositionDrafts({});
                   setKnockoutDrafts(emptyKnockoutDraft);
                 }}
                 className="rounded-md border border-stone-300 px-3 py-2 font-medium"
@@ -396,6 +478,82 @@ export function BolaoApp() {
 
           <section className="space-y-5">
             <div>
+              <h2 className="text-xl font-bold">Classificacao dos grupos</h2>
+              <p className="mt-1 text-sm text-stone-600">
+                Acerte o 1º e 2º colocado de cada grupo. Posicao exata vale 5 pontos; invertido vale 2.
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {Object.entries(teamsByGroup).map(([groupName, groupTeams]) => {
+                const draft = groupPositionDrafts[groupName] ?? { first: "", second: "" };
+                const disabled = !participant || isLocked;
+                return (
+                  <article key={groupName} className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-bold">Grupo {groupName}</h3>
+                        <p className="text-sm text-stone-500">Escolha 1º e 2º</p>
+                      </div>
+                      <button
+                        disabled={disabled || draft.saving}
+                        onClick={() => saveGroupPosition(groupName)}
+                        className="h-10 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                      >
+                        {draft.saving ? "Salvando" : "Salvar"}
+                      </button>
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <label className="grid gap-1 text-sm font-semibold text-stone-700">
+                        1º colocado
+                        <select
+                          disabled={disabled}
+                          value={draft.first}
+                          onChange={(event) =>
+                            setGroupPositionDrafts((current) => ({
+                              ...current,
+                              [groupName]: { ...draft, first: event.target.value },
+                            }))
+                          }
+                          className="h-11 rounded-md border border-stone-300 bg-white px-3 text-sm font-normal outline-none ring-emerald-600 focus:ring-2 disabled:bg-stone-100"
+                        >
+                          <option value="">Selecao</option>
+                          {groupTeams.map((team) => (
+                            <option key={`first-${groupName}-${team}`} value={team} disabled={team === draft.second}>
+                              {team}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="grid gap-1 text-sm font-semibold text-stone-700">
+                        2º colocado
+                        <select
+                          disabled={disabled}
+                          value={draft.second}
+                          onChange={(event) =>
+                            setGroupPositionDrafts((current) => ({
+                              ...current,
+                              [groupName]: { ...draft, second: event.target.value },
+                            }))
+                          }
+                          className="h-11 rounded-md border border-stone-300 bg-white px-3 text-sm font-normal outline-none ring-emerald-600 focus:ring-2 disabled:bg-stone-100"
+                        >
+                          <option value="">Selecao</option>
+                          {groupTeams.map((team) => (
+                            <option key={`second-${groupName}-${team}`} value={team} disabled={team === draft.first}>
+                              {team}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="space-y-5">
+            <div>
               <h2 className="text-xl font-bold">Mata-mata</h2>
               <p className="mt-1 text-sm text-stone-600">
                 Escolha quais selecoes chegam em cada fase. Cada fase pode ser salva separadamente.
@@ -464,7 +622,7 @@ export function BolaoApp() {
                       {index + 1}. {row.participant_name}
                     </p>
                     <p className="text-xs text-stone-500">
-                      Grupos {row.group_points} · Mata-mata {row.knockout_points}
+                      Grupos {row.group_points} · Classificacao {row.group_position_points} · Mata-mata {row.knockout_points}
                     </p>
                   </div>
                   <span className="rounded-md bg-stone-950 px-2 py-1 text-sm font-bold text-white">

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { knockoutStages } from "@/lib/knockout";
 import { supabase } from "@/lib/supabase-browser";
-import type { KnockoutActual, KnockoutStage, Match, Team } from "@/lib/types";
+import type { GroupPositionActual, KnockoutActual, KnockoutStage, Match, Team } from "@/lib/types";
 
 type ResultDraft = Record<string, { home: string; away: string; status: string; saving?: boolean }>;
 type Participant = {
@@ -13,6 +13,7 @@ type Participant = {
   created_at: string;
 };
 type ActualDraft = Record<KnockoutStage, string[]>;
+type GroupActualDraft = Record<string, { first: string; second: string; saving?: boolean }>;
 
 const emptyActualDraft = knockoutStages.reduce<ActualDraft>((acc, stage) => {
   acc[stage.key] = [];
@@ -28,6 +29,7 @@ export function AdminApp() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [drafts, setDrafts] = useState<ResultDraft>({});
+  const [groupActualDrafts, setGroupActualDrafts] = useState<GroupActualDraft>({});
   const [actualDrafts, setActualDrafts] = useState<ActualDraft>(emptyActualDraft);
   const [savingActualStage, setSavingActualStage] = useState<KnockoutStage | null>(null);
   const [participantName, setParticipantName] = useState("");
@@ -41,16 +43,32 @@ export function AdminApp() {
     return { finished, scheduled: matches.length - finished };
   }, [matches]);
 
+  const teamsByGroup = useMemo(() => {
+    return matches
+      .filter((match) => match.stage === "Fase de grupos" && match.group_name)
+      .reduce<Record<string, string[]>>((acc, match) => {
+        const groupName = match.group_name as string;
+        acc[groupName] = Array.from(new Set([...(acc[groupName] ?? []), match.home_team, match.away_team])).sort();
+        return acc;
+      }, {});
+  }, [matches]);
+
   const loadMatches = useCallback(async function loadMatches() {
     setLoading(true);
-    const [{ data, error }, { data: teamData }, { data: actualData, error: actualError }] = await Promise.all([
+    const [
+      { data, error },
+      { data: teamData },
+      { data: groupActualData, error: groupActualError },
+      { data: actualData, error: actualError },
+    ] = await Promise.all([
       supabase.from("matches").select("*").order("match_number"),
       supabase.from("teams").select("*").order("name"),
+      supabase.from("group_position_actuals").select("*"),
       supabase.from("knockout_actuals").select("*"),
     ]);
     setLoading(false);
 
-    if (error || actualError) {
+    if (error || groupActualError || actualError) {
       setMessage("Nao foi possivel carregar os jogos.");
       return;
     }
@@ -77,6 +95,16 @@ export function AdminApp() {
       nextActuals[actual.stage] = [...(nextActuals[actual.stage] ?? []), actual.team_name];
     });
     setActualDrafts(nextActuals);
+
+    const nextGroupActuals: GroupActualDraft = {};
+    ((groupActualData ?? []) as GroupPositionActual[]).forEach((actual) => {
+      const current = nextGroupActuals[actual.group_name] ?? { first: "", second: "" };
+      nextGroupActuals[actual.group_name] = {
+        ...current,
+        [actual.position === 1 ? "first" : "second"]: actual.team_name,
+      };
+    });
+    setGroupActualDrafts(nextGroupActuals);
   }, []);
 
   const loadParticipants = useCallback(async function loadParticipants() {
@@ -219,6 +247,51 @@ export function AdminApp() {
     setMessage("Classificados atualizados.");
   }
 
+  async function saveGroupActual(groupName: string) {
+    const draft = groupActualDrafts[groupName] ?? { first: "", second: "" };
+
+    if (!draft.first || !draft.second) {
+      setMessage("Escolha 1º e 2º colocado do grupo.");
+      return;
+    }
+
+    if (draft.first === draft.second) {
+      setMessage("1º e 2º colocados precisam ser selecoes diferentes.");
+      return;
+    }
+
+    setGroupActualDrafts((current) => ({
+      ...current,
+      [groupName]: { ...draft, saving: true },
+    }));
+
+    const response = await fetch("/api/admin/group-actuals", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-password": password,
+      },
+      body: JSON.stringify({
+        group_name: groupName,
+        first_place: draft.first,
+        second_place: draft.second,
+      }),
+    });
+    const payload = await response.json();
+
+    setGroupActualDrafts((current) => ({
+      ...current,
+      [groupName]: { ...draft, saving: false },
+    }));
+
+    if (!response.ok) {
+      setMessage(payload.error ?? "Nao foi possivel salvar classificacao do grupo.");
+      return;
+    }
+
+    setMessage("Classificacao do grupo atualizada.");
+  }
+
   function toggleActualTeam(stage: KnockoutStage, teamName: string) {
     const stageConfig = knockoutStages.find((item) => item.key === stage);
     if (!stageConfig) return;
@@ -337,6 +410,74 @@ export function AdminApp() {
         </aside>
 
         <div className="space-y-8">
+          <section>
+            <h2 className="mb-4 text-xl font-bold">Classificacao real dos grupos</h2>
+            <div className="grid gap-3 md:grid-cols-2">
+              {Object.entries(teamsByGroup).map(([groupName, groupTeams]) => {
+                const draft = groupActualDrafts[groupName] ?? { first: "", second: "" };
+                return (
+                  <article key={groupName} className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-bold">Grupo {groupName}</h3>
+                        <p className="text-sm text-stone-500">Resultado real do top 2</p>
+                      </div>
+                      <button
+                        onClick={() => saveGroupActual(groupName)}
+                        disabled={draft.saving}
+                        className="h-10 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:bg-stone-300"
+                      >
+                        {draft.saving ? "Salvando" : "Salvar"}
+                      </button>
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <label className="grid gap-1 text-sm font-semibold text-stone-700">
+                        1º colocado
+                        <select
+                          value={draft.first}
+                          onChange={(event) =>
+                            setGroupActualDrafts((current) => ({
+                              ...current,
+                              [groupName]: { ...draft, first: event.target.value },
+                            }))
+                          }
+                          className="h-11 rounded-md border border-stone-300 bg-white px-3 text-sm font-normal outline-none ring-emerald-600 focus:ring-2"
+                        >
+                          <option value="">Selecao</option>
+                          {groupTeams.map((team) => (
+                            <option key={`actual-first-${groupName}-${team}`} value={team} disabled={team === draft.second}>
+                              {team}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="grid gap-1 text-sm font-semibold text-stone-700">
+                        2º colocado
+                        <select
+                          value={draft.second}
+                          onChange={(event) =>
+                            setGroupActualDrafts((current) => ({
+                              ...current,
+                              [groupName]: { ...draft, second: event.target.value },
+                            }))
+                          }
+                          className="h-11 rounded-md border border-stone-300 bg-white px-3 text-sm font-normal outline-none ring-emerald-600 focus:ring-2"
+                        >
+                          <option value="">Selecao</option>
+                          {groupTeams.map((team) => (
+                            <option key={`actual-second-${groupName}-${team}`} value={team} disabled={team === draft.first}>
+                              {team}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
           <section>
             <h2 className="mb-4 text-xl font-bold">Classificados do mata-mata</h2>
             <div className="grid gap-4">

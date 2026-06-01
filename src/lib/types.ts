@@ -28,10 +28,12 @@ export type RankingRow = {
   participant_name: string;
   total_points: number;
   group_points: number;
+  group_position_points: number;
   knockout_points: number;
   exact_scores: number;
   detail_scores: number;
   outcome_scores: number;
+  group_position_hits: number;
   knockout_hits: number;
   predictions_count: number;
 };
@@ -63,5 +65,20 @@ export type KnockoutPrediction = {
 export type KnockoutActual = {
   id: string;
   stage: KnockoutStage;
+  team_name: string;
+};
+
+export type GroupPositionPrediction = {
+  id: string;
+  participant_id: string;
+  group_name: string;
+  position: 1 | 2;
+  team_name: string;
+};
+
+export type GroupPositionActual = {
+  id: string;
+  group_name: string;
+  position: 1 | 2;
   team_name: string;
 };

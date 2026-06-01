@@ -8,12 +8,11 @@ export const knockoutStages: Array<{
   limit: number;
   points: number;
 }> = [
-  { key: "round_of_32", label: "16 avos", limit: 32, points: 5 },
-  { key: "round_of_16", label: "Oitavas", limit: 16, points: 7 },
-  { key: "quarter_finals", label: "Quartas", limit: 8, points: 9 },
-  { key: "semi_finals", label: "Semifinais", limit: 4, points: 12 },
-  { key: "finalists", label: "Finalistas", limit: 2, points: 16 },
-  { key: "champion", label: "Campeao", limit: 1, points: 25 },
+  { key: "round_of_16", label: "Oitavas", limit: 16, points: 6 },
+  { key: "quarter_finals", label: "Quartas", limit: 8, points: 10 },
+  { key: "semi_finals", label: "Semifinais", limit: 4, points: 15 },
+  { key: "finalists", label: "Finalistas", limit: 2, points: 20 },
+  { key: "champion", label: "Campeao", limit: 1, points: 35 },
 ];
 
 export function isKnockoutStage(value: string): value is KnockoutStage {

@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Bolao da Copa 2026
 
-## Getting Started
+MVP de bolao da Copa usando Next.js, Supabase e Tailwind.
 
-First, run the development server:
+## Como rodar
+
+1. Instale dependencias:
+
+```bash
+npm install
+```
+
+2. Crie um projeto no Supabase e rode o SQL em `supabase/schema.sql`.
+
+3. Se voce ja tinha rodado o banco antes, rode tambem as migrations incrementais:
+
+```text
+supabase/add-participant-pins.sql
+supabase/2026-rules-and-copa-json.sql
+```
+
+4. Copie `.env.local.example` para `.env.local` e preencha:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+ADMIN_PASSWORD=
+```
+
+5. Inicie o app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Fluxos
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `/`: usuario informa nome + PIN, salva placares da fase de grupos, aposta selecoes por fase no mata-mata e ve ranking.
+- `/admin`: admin informa a senha de `ADMIN_PASSWORD`, cadastra participantes/PINs, atualiza resultados e marca classificados reais do mata-mata.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Pontuacao
 
-## Learn More
+- Fase de grupos:
+  - 5 pontos para placar exato.
+  - 3 pontos para acertar vencedor/empate e tambem saldo ou gols do vencedor.
+  - 2 pontos para acertar somente vencedor ou empate.
+- Mata-mata:
+  - 16 avos: 5 pontos por selecao.
+  - Oitavas: 7 pontos por selecao.
+  - Quartas: 9 pontos por selecao.
+  - Semifinais: 12 pontos por selecao.
+  - Finalistas: 16 pontos por selecao.
+  - Campeao: 25 pontos.
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Todas as apostas fecham automaticamente em `2026-06-11T19:00:00Z`, abertura da Copa.

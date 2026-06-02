@@ -66,6 +66,13 @@ function groupTeams(matches: Match[]) {
   }, {});
 }
 
+function sameSelection(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  const leftSorted = [...left].sort();
+  const rightSorted = [...right].sort();
+  return leftSorted.every((value, index) => value === rightSorted[index]);
+}
+
 export function BolaoApp() {
   const [participant, setParticipant] = useState<{ id: string; name: string } | null>(null);
   const [name, setName] = useState("");
@@ -76,6 +83,9 @@ export function BolaoApp() {
   const [drafts, setDrafts] = useState<PredictionDraft>({});
   const [groupPositionDrafts, setGroupPositionDrafts] = useState<GroupPositionDraft>({});
   const [knockoutDrafts, setKnockoutDrafts] = useState<KnockoutDraft>(emptyKnockoutDraft);
+  const [savedDrafts, setSavedDrafts] = useState<PredictionDraft>({});
+  const [savedGroupPositionDrafts, setSavedGroupPositionDrafts] = useState<GroupPositionDraft>({});
+  const [savedKnockoutDrafts, setSavedKnockoutDrafts] = useState<KnockoutDraft>(emptyKnockoutDraft);
   const [groupMatchStatuses, setGroupMatchStatuses] = useState<StatusMap>({});
   const [groupPositionStatuses, setGroupPositionStatuses] = useState<StatusMap>({});
   const [knockoutStatuses, setKnockoutStatuses] = useState<Record<KnockoutStage, SaveStatus | undefined>>(
@@ -93,6 +103,24 @@ export function BolaoApp() {
   );
   const groupedMatches = useMemo(() => groupMatches(groupStageMatches), [groupStageMatches]);
   const teamsByGroup = useMemo(() => groupTeams(groupStageMatches), [groupStageMatches]);
+  const completion = useMemo(() => {
+    const groupMatchesFilled = groupStageMatches.filter((match) => {
+      const draft = drafts[match.id];
+      return draft?.home !== "" && draft?.away !== "" && draft?.home !== undefined && draft?.away !== undefined;
+    }).length;
+    const groupNames = Object.keys(teamsByGroup);
+    const groupPositionsFilled = groupNames.filter((groupName) => {
+      const draft = groupPositionDrafts[groupName];
+      return Boolean(draft?.first && draft?.second && draft.first !== draft.second);
+    }).length;
+    const knockoutStagesFilled = knockoutStages.filter((stage) => {
+      return (knockoutDrafts[stage.key] ?? []).length === stage.limit;
+    }).length;
+    const total = groupStageMatches.length + groupNames.length + knockoutStages.length;
+    const filled = groupMatchesFilled + groupPositionsFilled + knockoutStagesFilled;
+
+    return { filled, total, missing: Math.max(total - filled, 0), isComplete: total > 0 && filled === total };
+  }, [drafts, groupPositionDrafts, groupStageMatches, knockoutDrafts, teamsByGroup]);
 
   function statusLabel(status?: SaveStatus) {
     if (status === "saving") return "Salvando";
@@ -175,6 +203,7 @@ export function BolaoApp() {
       nextGroupMatchStatuses[prediction.match_id] = "saved";
     });
     setDrafts(nextDrafts);
+    setSavedDrafts(nextDrafts);
     setGroupMatchStatuses(nextGroupMatchStatuses);
 
     const nextGroupPositionDrafts: GroupPositionDraft = {};
@@ -188,6 +217,7 @@ export function BolaoApp() {
       nextGroupPositionStatuses[prediction.group_name] = "saved";
     });
     setGroupPositionDrafts(nextGroupPositionDrafts);
+    setSavedGroupPositionDrafts(nextGroupPositionDrafts);
     setGroupPositionStatuses(nextGroupPositionStatuses);
 
     const nextKnockoutDrafts = knockoutStages.reduce<KnockoutDraft>((acc, stage) => {
@@ -202,6 +232,7 @@ export function BolaoApp() {
       ];
     });
     setKnockoutDrafts(nextKnockoutDrafts);
+    setSavedKnockoutDrafts(nextKnockoutDrafts);
     setKnockoutStatuses(
       knockoutStages.reduce<Record<KnockoutStage, SaveStatus | undefined>>((acc, stage) => {
         acc[stage.key] = nextKnockoutDrafts[stage.key].length > 0 ? "saved" : undefined;
@@ -276,6 +307,10 @@ export function BolaoApp() {
     }
 
     setGroupMatchStatuses((current) => ({ ...current, [match.id]: "saved" }));
+    setSavedDrafts((current) => ({
+      ...current,
+      [match.id]: { home: String(homeScore), away: String(awayScore) },
+    }));
     if (!options?.silent) {
       setMessage("Palpite salvo.");
       await loadPublicData();
@@ -306,6 +341,7 @@ export function BolaoApp() {
     }
 
     setKnockoutStatuses((current) => ({ ...current, [stage]: "saved" }));
+    setSavedKnockoutDrafts((current) => ({ ...current, [stage]: [...(knockoutDrafts[stage] ?? [])] }));
     if (!options?.silent) {
       setMessage("Aposta do mata-mata salva.");
       await loadPublicData();
@@ -359,6 +395,7 @@ export function BolaoApp() {
     }
 
     setGroupPositionStatuses((current) => ({ ...current, [groupName]: "saved" }));
+    setSavedGroupPositionDrafts((current) => ({ ...current, [groupName]: { first: draft.first, second: draft.second } }));
     if (!options?.silent) {
       setMessage("Classificacao do grupo salva.");
       await loadPublicData();
@@ -391,7 +428,18 @@ export function BolaoApp() {
 
     for (const match of groupStageMatches) {
       const draft = drafts[match.id];
-      if (draft?.home !== "" && draft?.away !== "" && draft?.home !== undefined && draft?.away !== undefined) {
+      const savedDraft = savedDrafts[match.id];
+      const currentHome = draft?.home === undefined || draft.home === "" ? "" : String(Number(draft.home));
+      const currentAway = draft?.away === undefined || draft.away === "" ? "" : String(Number(draft.away));
+      const savedHome = savedDraft?.home === undefined || savedDraft.home === "" ? "" : String(Number(savedDraft.home));
+      const savedAway = savedDraft?.away === undefined || savedDraft.away === "" ? "" : String(Number(savedDraft.away));
+      if (
+        draft?.home !== "" &&
+        draft?.away !== "" &&
+        draft?.home !== undefined &&
+        draft?.away !== undefined &&
+        (currentHome !== savedHome || currentAway !== savedAway)
+      ) {
         const ok = await savePrediction(match, { silent: true });
         if (ok) saved += 1;
         else failed += 1;
@@ -400,7 +448,12 @@ export function BolaoApp() {
 
     for (const groupName of Object.keys(teamsByGroup)) {
       const draft = groupPositionDrafts[groupName];
-      if (draft?.first && draft?.second) {
+      const savedDraft = savedGroupPositionDrafts[groupName];
+      if (
+        draft?.first &&
+        draft?.second &&
+        (draft.first !== savedDraft?.first || draft.second !== savedDraft?.second)
+      ) {
         const ok = await saveGroupPosition(groupName, { silent: true });
         if (ok) saved += 1;
         else failed += 1;
@@ -408,7 +461,9 @@ export function BolaoApp() {
     }
 
     for (const stage of knockoutStages) {
-      if ((knockoutDrafts[stage.key] ?? []).length > 0) {
+      const selected = knockoutDrafts[stage.key] ?? [];
+      const savedSelected = savedKnockoutDrafts[stage.key] ?? [];
+      if (selected.length > 0 && !sameSelection(selected, savedSelected)) {
         const ok = await saveKnockoutStage(stage.key, { silent: true });
         if (ok) saved += 1;
         else failed += 1;
@@ -423,7 +478,7 @@ export function BolaoApp() {
     } else if (saved > 0) {
       setMessage(`${saved} itens salvos.`);
     } else {
-      setMessage("Nenhum palpite preenchido para salvar.");
+      setMessage("Nenhuma alteracao nova para salvar.");
     }
   }
 
@@ -449,14 +504,27 @@ export function BolaoApp() {
             </Link>
           </div>
 
-          <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-950 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              Prazo final das apostas: {lockDateLabel()}. {isLocked ? "Apostas encerradas." : "Apostas abertas."}
-            </span>
+          <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-950 sm:flex-row sm:items-start sm:justify-between">
+            <div className="grid min-w-0 gap-2">
+              <span>
+                Prazo final das apostas: {lockDateLabel()}. {isLocked ? "Apostas encerradas." : "Apostas abertas."}
+              </span>
+              {participant ? (
+                <span
+                  className={`w-fit rounded-md px-2 py-1 text-xs font-bold ${
+                    completion.isComplete ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"
+                  }`}
+                >
+                  {completion.isComplete
+                    ? "Todas as apostas estao preenchidas"
+                    : `Faltam ${completion.missing} itens para preencher tudo`}
+                </span>
+              ) : null}
+            </div>
             <button
               onClick={saveAllPredictions}
               disabled={!participant || isLocked || savingAll}
-              className="h-10 rounded-md bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+              className="h-10 w-full shrink-0 rounded-md bg-stone-950 px-4 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300 sm:w-auto"
             >
               {savingAll ? "Salvando tudo" : "Salvar tudo"}
             </button>
@@ -488,6 +556,9 @@ export function BolaoApp() {
               <span className="rounded-md bg-emerald-100 px-3 py-2 font-semibold text-emerald-900">
                 Jogando como {participant.name}
               </span>
+              <Link href="/minhas-apostas" className="rounded-md border border-emerald-700 px-3 py-2 font-semibold text-emerald-800">
+                Ver resumo / PDF
+              </Link>
               <button
                 onClick={() => {
                   localStorage.removeItem(participantStorageKey);
@@ -495,6 +566,9 @@ export function BolaoApp() {
                   setDrafts({});
                   setGroupPositionDrafts({});
                   setKnockoutDrafts(emptyKnockoutDraft);
+                  setSavedDrafts({});
+                  setSavedGroupPositionDrafts({});
+                  setSavedKnockoutDrafts(emptyKnockoutDraft);
                   setGroupMatchStatuses({});
                   setGroupPositionStatuses({});
                   setKnockoutStatuses({} as Record<KnockoutStage, SaveStatus | undefined>);
@@ -546,7 +620,7 @@ export function BolaoApp() {
                             ) : null}
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-start gap-2">
                             <input
                               aria-label={`Palpite ${match.home_team}`}
                               disabled={disabled}
@@ -580,15 +654,15 @@ export function BolaoApp() {
                               className="h-11 w-14 rounded-md border border-stone-300 text-center text-sm font-bold outline-none ring-emerald-600 focus:ring-2 disabled:bg-stone-100"
                               inputMode="numeric"
                             />
-                            <div className="flex flex-col items-start gap-1">
+                            <div className="flex flex-col items-end gap-1">
                               <button
                                 disabled={disabled || draft.saving}
                                 onClick={() => savePrediction(match)}
-                                className="h-11 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                                className="h-11 w-24 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                               >
                                 {draft.saving ? "Salvando" : "Salvar"}
                               </button>
-                              <span className={`min-h-4 text-xs font-semibold ${statusClassName(groupMatchStatuses[match.id])}`}>
+                              <span className={`h-4 whitespace-nowrap text-right text-xs font-semibold leading-4 ${statusClassName(groupMatchStatuses[match.id])}`}>
                                 {statusLabel(groupMatchStatuses[match.id])}
                               </span>
                             </div>
@@ -620,15 +694,15 @@ export function BolaoApp() {
                         <h3 className="font-bold">Grupo {groupName}</h3>
                         <p className="text-sm text-stone-500">Escolha 1º e 2º</p>
                       </div>
-                      <div className="flex flex-col items-start gap-1">
+                      <div className="flex flex-col items-end gap-1">
                         <button
                           disabled={disabled || draft.saving}
                           onClick={() => saveGroupPosition(groupName)}
-                          className="h-10 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                          className="h-10 w-24 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                         >
                           {draft.saving ? "Salvando" : "Salvar"}
                         </button>
-                        <span className={`min-h-4 text-xs font-semibold ${statusClassName(groupPositionStatuses[groupName])}`}>
+                        <span className={`h-4 whitespace-nowrap text-right text-xs font-semibold leading-4 ${statusClassName(groupPositionStatuses[groupName])}`}>
                           {statusLabel(groupPositionStatuses[groupName])}
                         </span>
                       </div>
@@ -709,15 +783,15 @@ export function BolaoApp() {
                           {selected.length}/{stage.limit} selecoes · {stage.points} pontos por acerto
                         </p>
                       </div>
-                      <div className="flex flex-col items-start gap-1">
+                      <div className="flex flex-col items-end gap-1">
                         <button
                           disabled={!participant || isLocked || savingStage === stage.key}
                           onClick={() => saveKnockoutStage(stage.key)}
-                          className="h-10 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                          className="h-10 w-28 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                         >
                           {savingStage === stage.key ? "Salvando" : "Salvar fase"}
                         </button>
-                        <span className={`min-h-4 text-xs font-semibold ${statusClassName(knockoutStatuses[stage.key])}`}>
+                        <span className={`h-4 whitespace-nowrap text-right text-xs font-semibold leading-4 ${statusClassName(knockoutStatuses[stage.key])}`}>
                           {statusLabel(knockoutStatuses[stage.key])}
                         </span>
                       </div>
@@ -753,21 +827,24 @@ export function BolaoApp() {
 
         <aside className="h-fit rounded-lg border border-stone-200 bg-white p-4 shadow-sm lg:sticky lg:top-6">
           <h2 className="text-xl font-bold">Ranking</h2>
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 max-h-[360px] space-y-3 overflow-y-auto pr-1 lg:max-h-[calc(100vh-160px)]">
             {ranking.length === 0 ? (
               <p className="text-sm text-stone-500">O ranking aparece quando houver palpites e resultados.</p>
             ) : (
               ranking.map((row, index) => (
-                <div key={row.participant_id} className="flex items-center justify-between border-b border-stone-100 pb-3 last:border-0">
-                  <div>
-                    <p className="font-semibold">
+                <div
+                  key={row.participant_id}
+                  className="flex items-center justify-between gap-3 border-b border-stone-100 pb-3 last:border-0"
+                >
+                  <div className="min-w-0">
+                    <p className="break-words font-semibold">
                       {index + 1}. {row.participant_name}
                     </p>
-                    <p className="text-xs text-stone-500">
+                    <p className="break-words text-xs text-stone-500">
                       Grupos {row.group_points} · Classificacao {row.group_position_points} · Mata-mata {row.knockout_points}
                     </p>
                   </div>
-                  <span className="rounded-md bg-stone-950 px-2 py-1 text-sm font-bold text-white">
+                  <span className="shrink-0 rounded-md bg-stone-950 px-2 py-1 text-sm font-bold text-white">
                     {row.total_points}
                   </span>
                 </div>

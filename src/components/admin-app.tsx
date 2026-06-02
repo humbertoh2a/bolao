@@ -12,6 +12,10 @@ type Participant = {
   name: string;
   created_at: string;
   deleted_at: string | null;
+  completion_filled: number;
+  completion_total: number;
+  completion_missing: number;
+  completion_complete: boolean;
 };
 type ActualDraft = Record<KnockoutStage, string[]>;
 type GroupActualDraft = Record<string, { first: string; second: string; saving?: boolean }>;
@@ -443,11 +447,22 @@ export function AdminApp() {
                   }`}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div>
+                    <div className="min-w-0">
                       <span className="text-sm font-semibold">{participant.name}</span>
                       {participant.deleted_at ? (
                         <p className="text-xs text-stone-500">Excluido logicamente</p>
                       ) : null}
+                      <p
+                        className={`mt-1 w-fit rounded-md px-2 py-1 text-xs font-bold ${
+                          participant.completion_complete
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-amber-100 text-amber-900"
+                        }`}
+                      >
+                        {participant.completion_complete
+                          ? "Apostas completas"
+                          : `Faltam ${participant.completion_missing} itens`}
+                      </p>
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">

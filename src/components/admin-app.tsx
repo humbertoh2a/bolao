@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { knockoutStages } from "@/lib/knockout";
 import { supabase } from "@/lib/supabase-browser";
+import { formatTeamName } from "@/lib/team-names";
 import type { GroupPositionActual, KnockoutActual, KnockoutStage, Match, Team } from "@/lib/types";
 
 type ResultDraft = Record<string, { home: string; away: string; status: string; saving?: boolean }>;
@@ -537,7 +538,7 @@ export function AdminApp() {
                           <option value="">Selecao</option>
                           {groupTeams.map((team) => (
                             <option key={`actual-first-${groupName}-${team}`} value={team} disabled={team === draft.second}>
-                              {team}
+                              {formatTeamName(team)}
                             </option>
                           ))}
                         </select>
@@ -557,7 +558,7 @@ export function AdminApp() {
                           <option value="">Selecao</option>
                           {groupTeams.map((team) => (
                             <option key={`actual-second-${groupName}-${team}`} value={team} disabled={team === draft.first}>
-                              {team}
+                              {formatTeamName(team)}
                             </option>
                           ))}
                         </select>
@@ -607,7 +608,7 @@ export function AdminApp() {
                               onChange={() => toggleActualTeam(stage.key, team.name)}
                               className="h-4 w-4 accent-emerald-700"
                             />
-                            <span>{team.name}</span>
+                            <span>{formatTeamName(team.name)}</span>
                           </label>
                         );
                       })}
@@ -632,7 +633,7 @@ export function AdminApp() {
                       Jogo {match.match_number} · {match.stage} {match.group_name ? `· Grupo ${match.group_name}` : ""}
                     </p>
                     <h2 className="mt-2 text-lg font-bold">
-                      {match.home_team} x {match.away_team}
+                      {formatTeamName(match.home_team)} x {formatTeamName(match.away_team)}
                     </h2>
                     <p className="mt-1 text-sm text-stone-500">{match.stadium}</p>
                   </div>

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { knockoutStages, predictionLockAt } from "@/lib/knockout";
 import { supabase } from "@/lib/supabase-browser";
+import { formatTeamName } from "@/lib/team-names";
 import type {
   GroupPositionPrediction,
   KnockoutPrediction,
@@ -610,7 +611,8 @@ export function BolaoApp() {
                               <span>{matchDateLabel(match.kickoff_at)}</span>
                             </div>
                             <p className="mt-2 text-lg font-bold">
-                              {match.home_team} <span className="text-stone-400">x</span> {match.away_team}
+                              {formatTeamName(match.home_team)} <span className="text-stone-400">x</span>{" "}
+                              {formatTeamName(match.away_team)}
                             </p>
                             <p className="mt-1 text-sm text-stone-500">{match.stadium}</p>
                             {match.status === "finished" ? (
@@ -622,7 +624,7 @@ export function BolaoApp() {
 
                           <div className="flex items-start gap-2">
                             <input
-                              aria-label={`Palpite ${match.home_team}`}
+                              aria-label={`Palpite ${formatTeamName(match.home_team)}`}
                               disabled={disabled}
                               value={draft.home}
                               onChange={(event) =>
@@ -639,7 +641,7 @@ export function BolaoApp() {
                             />
                             <span className="font-bold text-stone-400">x</span>
                             <input
-                              aria-label={`Palpite ${match.away_team}`}
+                              aria-label={`Palpite ${formatTeamName(match.away_team)}`}
                               disabled={disabled}
                               value={draft.away}
                               onChange={(event) =>
@@ -727,7 +729,7 @@ export function BolaoApp() {
                           <option value="">Selecao</option>
                           {groupTeams.map((team) => (
                             <option key={`first-${groupName}-${team}`} value={team} disabled={team === draft.second}>
-                              {team}
+                              {formatTeamName(team)}
                             </option>
                           ))}
                         </select>
@@ -751,7 +753,7 @@ export function BolaoApp() {
                           <option value="">Selecao</option>
                           {groupTeams.map((team) => (
                             <option key={`second-${groupName}-${team}`} value={team} disabled={team === draft.first}>
-                              {team}
+                              {formatTeamName(team)}
                             </option>
                           ))}
                         </select>
@@ -813,7 +815,7 @@ export function BolaoApp() {
                               onChange={() => toggleKnockoutTeam(stage.key, team.name)}
                               className="h-4 w-4 accent-emerald-700"
                             />
-                            <span>{team.name}</span>
+                            <span>{formatTeamName(team.name)}</span>
                           </label>
                         );
                       })}

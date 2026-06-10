@@ -3,9 +3,31 @@ import { knockoutStages } from "@/lib/knockout";
 import { hashPin } from "@/lib/pin";
 import { createSupabaseAdmin } from "@/lib/supabase-admin";
 
+const pageSize = 1000;
+
 function isAuthorized(request: Request) {
   const adminPassword = process.env.ADMIN_PASSWORD;
   return Boolean(adminPassword && request.headers.get("x-admin-password") === adminPassword);
+}
+
+async function fetchAllRows<T>(createQuery: () => {
+  range: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
+}) {
+  const rows: T[] = [];
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await createQuery().range(from, from + pageSize - 1);
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    rows.push(...(data ?? []));
+
+    if ((data ?? []).length < pageSize) {
+      return { data: rows, error: null };
+    }
+  }
 }
 
 function validateParticipantInput(name: unknown, pin: unknown) {
@@ -41,8 +63,12 @@ export async function GET(request: Request) {
       .order("deleted_at", { ascending: true, nullsFirst: true })
       .order("name", { ascending: true }),
     supabase.from("matches").select("id, group_name").eq("stage", "Fase de grupos"),
-    supabase.from("group_position_predictions").select("participant_id, group_name, position"),
-    supabase.from("knockout_predictions").select("participant_id, stage, team_name"),
+    fetchAllRows<{ participant_id: string; group_name: string; position: number }>(() =>
+      supabase.from("group_position_predictions").select("participant_id, group_name, position"),
+    ),
+    fetchAllRows<{ participant_id: string; stage: string; team_name: string }>(() =>
+      supabase.from("knockout_predictions").select("participant_id, stage, team_name"),
+    ),
   ]);
 
   if (error || groupMatchesError || groupPositionsError || knockoutPredictionsError) {
@@ -58,10 +84,10 @@ export async function GET(request: Request) {
   const totalRequired = groupMatchIds.size + groupNames.size + knockoutStages.length;
 
   const groupPredictionsByParticipant = new Map<string, Set<string>>();
-  const { data: groupPredictions, error: groupPredictionsError } = await supabase
-    .from("predictions")
-    .select("participant_id, match_id")
-    .in("match_id", Array.from(groupMatchIds));
+  const { data: groupPredictions, error: groupPredictionsError } = await fetchAllRows<{
+    participant_id: string;
+    match_id: string;
+  }>(() => supabase.from("predictions").select("participant_id, match_id").in("match_id", Array.from(groupMatchIds)));
 
   if (groupPredictionsError) {
     return NextResponse.json({ error: groupPredictionsError.message }, { status: 500 });

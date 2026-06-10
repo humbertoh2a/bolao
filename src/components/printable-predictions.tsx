@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { knockoutStages } from "@/lib/knockout";
 import { supabase } from "@/lib/supabase-browser";
+import { formatTeamName } from "@/lib/team-names";
 import type {
   GroupPositionPrediction,
   KnockoutPrediction,
@@ -69,20 +70,7 @@ export function PrintablePredictions() {
     return { filled, total, missing: Math.max(total - filled, 0), isComplete: total > 0 && filled === total };
   }, [groupPositions, groupStageMatches, knockoutPredictions, predictions, teamsByGroup]);
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      const stored = localStorage.getItem(participantStorageKey);
-      if (!stored) {
-        setLoading(false);
-        return;
-      }
-      const parsed = JSON.parse(stored) as StoredParticipant;
-      setParticipant(parsed);
-      loadPredictions(parsed.id);
-    });
-  }, []);
-
-  async function loadPredictions(participantId: string) {
+  const loadPredictions = useCallback(async function loadPredictions(participantId: string) {
     setLoading(true);
     const [
       { data: matchData, error: matchError },
@@ -129,7 +117,20 @@ export function PrintablePredictions() {
         return acc;
       }, {}),
     );
-  }
+  }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      const stored = localStorage.getItem(participantStorageKey);
+      if (!stored) {
+        setLoading(false);
+        return;
+      }
+      const parsed = JSON.parse(stored) as StoredParticipant;
+      setParticipant(parsed);
+      loadPredictions(parsed.id);
+    });
+  }, [loadPredictions]);
 
   return (
     <main className="min-h-screen bg-[#f7f3ea] px-4 py-6 text-stone-950 print:bg-white print:px-0 print:py-0">
@@ -191,7 +192,7 @@ export function PrintablePredictions() {
                       return (
                         <tr key={match.id} className="border-b border-stone-100">
                           <td className="py-2 pr-3">
-                            {match.home_team} x {match.away_team}
+                            {formatTeamName(match.home_team)} x {formatTeamName(match.away_team)}
                           </td>
                           <td className="py-2 pr-3 text-stone-600">{matchDateLabel(match.kickoff_at)}</td>
                           <td className="py-2 pr-3 font-semibold">
@@ -215,8 +216,12 @@ export function PrintablePredictions() {
                   return (
                     <div key={groupName} className="rounded-md border border-stone-200 p-3 print:break-inside-avoid">
                       <h3 className="font-bold">Grupo {groupName}</h3>
-                      <p className="mt-2 text-sm">1º: {draft?.first || "Nao preenchido"}</p>
-                      <p className="text-sm">2º: {draft?.second || "Nao preenchido"}</p>
+                      <p className="mt-2 text-sm">
+                        1º: {draft?.first ? formatTeamName(draft.first) : "Nao preenchido"}
+                      </p>
+                      <p className="text-sm">
+                        2º: {draft?.second ? formatTeamName(draft.second) : "Nao preenchido"}
+                      </p>
                     </div>
                   );
                 })}
@@ -234,7 +239,7 @@ export function PrintablePredictions() {
                         {stage.label} ({selected.length}/{stage.limit})
                       </h3>
                       <p className="mt-2 text-sm">
-                        {selected.length > 0 ? selected.join(", ") : "Nao preenchido"}
+                        {selected.length > 0 ? selected.map(formatTeamName).join(", ") : "Nao preenchido"}
                       </p>
                     </div>
                   );

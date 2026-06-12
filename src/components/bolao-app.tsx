@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { knockoutStages, predictionLockAt } from "@/lib/knockout";
 import { supabase } from "@/lib/supabase-browser";
 import { formatTeamName } from "@/lib/team-names";
@@ -20,6 +20,12 @@ type KnockoutDraft = Record<KnockoutStage, string[]>;
 type GroupPositionDraft = Record<string, { first: string; second: string; saving?: boolean }>;
 type SaveStatus = "saved" | "dirty" | "saving" | "error";
 type StatusMap = Record<string, SaveStatus>;
+type PredictionAccess = {
+  is_general_open: boolean;
+  is_exception_open: boolean;
+  exception_expires_at: string;
+  now: string;
+};
 
 const participantStorageKey = "bolao:participant";
 
@@ -96,8 +102,12 @@ export function BolaoApp() {
   const [savingAll, setSavingAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [predictionAccess, setPredictionAccess] = useState<PredictionAccess | null>(null);
 
-  const isLocked = Date.now() >= new Date(predictionLockAt).getTime();
+  const isGeneralOpen = predictionAccess?.is_general_open ?? Date.now() < new Date(predictionLockAt).getTime();
+  const isExceptionOpen = predictionAccess?.is_exception_open ?? false;
+  const isLocked = !isGeneralOpen && !isExceptionOpen;
+  const accessNow = predictionAccess?.now ?? new Date().toISOString();
   const groupStageMatches = useMemo(
     () => matches.filter((match) => match.stage === "Fase de grupos"),
     [matches],
@@ -139,6 +149,34 @@ export function BolaoApp() {
     return "text-stone-500";
   }
 
+  function savedMatchExists(matchId: string) {
+    const savedDraft = savedDrafts[matchId];
+    return savedDraft?.home !== undefined && savedDraft?.away !== undefined;
+  }
+
+  function canEditMatch(match: Match) {
+    if (!participant || !predictionAccess) return false;
+    if (predictionAccess.is_general_open) return true;
+    if (!predictionAccess.is_exception_open || savedMatchExists(match.id)) return false;
+    return match.status !== "finished" && new Date(match.kickoff_at).getTime() > new Date(accessNow).getTime();
+  }
+
+  function canEditGroupPosition(groupName: string) {
+    if (!participant || !predictionAccess) return false;
+    if (predictionAccess.is_general_open) return true;
+    if (!predictionAccess.is_exception_open) return false;
+    const savedDraft = savedGroupPositionDrafts[groupName];
+    return !(savedDraft?.first && savedDraft?.second);
+  }
+
+  function canEditKnockoutStage(stage: KnockoutStage) {
+    if (!participant || !predictionAccess) return false;
+    if (predictionAccess.is_general_open) return true;
+    if (!predictionAccess.is_exception_open) return false;
+    const stageConfig = knockoutStages.find((item) => item.key === stage);
+    return (savedKnockoutDrafts[stage] ?? []).length < (stageConfig?.limit ?? 0);
+  }
+
   useEffect(() => {
     queueMicrotask(() => {
       const stored = localStorage.getItem(participantStorageKey);
@@ -152,11 +190,17 @@ export function BolaoApp() {
     loadPublicData();
   }, []);
 
-  useEffect(() => {
-    if (participant) {
-      loadParticipantPredictions(participant.id);
+  const loadPredictionAccess = useCallback(async function loadPredictionAccess(participantId: string) {
+    const response = await fetch(`/api/predictions/access?participant_id=${encodeURIComponent(participantId)}`);
+    const payload = await response.json();
+
+    if (!response.ok) {
+      setMessage(payload.error ?? "Nao foi possivel carregar permissoes de aposta.");
+      return;
     }
-  }, [participant]);
+
+    setPredictionAccess(payload as PredictionAccess);
+  }, []);
 
   async function loadPublicData() {
     setLoading(true);
@@ -177,17 +221,20 @@ export function BolaoApp() {
     setLoading(false);
   }
 
-  async function loadParticipantPredictions(participantId: string) {
+  const loadParticipantPredictions = useCallback(async function loadParticipantPredictions(participantId: string) {
     const [
+      accessResult,
       { data: groupData, error: groupError },
       { data: positionData, error: positionError },
       { data: knockoutData, error: knockoutError },
     ] =
       await Promise.all([
+        loadPredictionAccess(participantId),
         supabase.from("predictions").select("*").eq("participant_id", participantId),
         supabase.from("group_position_predictions").select("*").eq("participant_id", participantId),
         supabase.from("knockout_predictions").select("*").eq("participant_id", participantId),
       ]);
+    void accessResult;
 
     if (groupError || positionError || knockoutError) {
       setMessage("Nao foi possivel carregar seus palpites.");
@@ -240,7 +287,15 @@ export function BolaoApp() {
         return acc;
       }, {} as Record<KnockoutStage, SaveStatus | undefined>),
     );
-  }
+  }, [loadPredictionAccess]);
+
+  useEffect(() => {
+    if (participant) {
+      queueMicrotask(() => {
+        loadParticipantPredictions(participant.id);
+      });
+    }
+  }, [loadParticipantPredictions, participant]);
 
   async function handleJoin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -435,6 +490,7 @@ export function BolaoApp() {
       const savedHome = savedDraft?.home === undefined || savedDraft.home === "" ? "" : String(Number(savedDraft.home));
       const savedAway = savedDraft?.away === undefined || savedDraft.away === "" ? "" : String(Number(savedDraft.away));
       if (
+        canEditMatch(match) &&
         draft?.home !== "" &&
         draft?.away !== "" &&
         draft?.home !== undefined &&
@@ -451,6 +507,7 @@ export function BolaoApp() {
       const draft = groupPositionDrafts[groupName];
       const savedDraft = savedGroupPositionDrafts[groupName];
       if (
+        canEditGroupPosition(groupName) &&
         draft?.first &&
         draft?.second &&
         (draft.first !== savedDraft?.first || draft.second !== savedDraft?.second)
@@ -464,7 +521,7 @@ export function BolaoApp() {
     for (const stage of knockoutStages) {
       const selected = knockoutDrafts[stage.key] ?? [];
       const savedSelected = savedKnockoutDrafts[stage.key] ?? [];
-      if (selected.length > 0 && !sameSelection(selected, savedSelected)) {
+      if (canEditKnockoutStage(stage.key) && selected.length > 0 && !sameSelection(selected, savedSelected)) {
         const ok = await saveKnockoutStage(stage.key, { silent: true });
         if (ok) saved += 1;
         else failed += 1;
@@ -508,7 +565,12 @@ export function BolaoApp() {
           <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-950 sm:flex-row sm:items-start sm:justify-between">
             <div className="grid min-w-0 gap-2">
               <span>
-                Prazo final das apostas: {lockDateLabel()}. {isLocked ? "Apostas encerradas." : "Apostas abertas."}
+                Prazo final das apostas: {lockDateLabel()}.{" "}
+                {isGeneralOpen
+                  ? "Apostas abertas."
+                  : isExceptionOpen
+                    ? "Excecao temporaria ativa para completar pendencias."
+                    : "Apostas encerradas."}
               </span>
               {participant ? (
                 <span
@@ -573,6 +635,7 @@ export function BolaoApp() {
                   setGroupMatchStatuses({});
                   setGroupPositionStatuses({});
                   setKnockoutStatuses({} as Record<KnockoutStage, SaveStatus | undefined>);
+                  setPredictionAccess(null);
                 }}
                 className="rounded-md border border-stone-300 px-3 py-2 font-medium"
               >
@@ -601,7 +664,7 @@ export function BolaoApp() {
                 <div className="grid gap-3">
                   {groupMatches.map((match) => {
                     const draft = drafts[match.id] ?? { home: "", away: "" };
-                    const disabled = !participant || isLocked;
+                    const disabled = !canEditMatch(match);
                     return (
                       <article key={match.id} className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
                         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -688,7 +751,8 @@ export function BolaoApp() {
             <div className="grid gap-3 md:grid-cols-2">
               {Object.entries(teamsByGroup).map(([groupName, groupTeams]) => {
                 const draft = groupPositionDrafts[groupName] ?? { first: "", second: "" };
-                const disabled = !participant || isLocked;
+                const disabled = !canEditGroupPosition(groupName);
+                const savedDraft = savedGroupPositionDrafts[groupName];
                 return (
                   <article key={groupName} className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
                     <div className="flex items-start justify-between gap-3">
@@ -713,7 +777,7 @@ export function BolaoApp() {
                       <label className="grid gap-1 text-sm font-semibold text-stone-700">
                         1º colocado
                         <select
-                          disabled={disabled}
+                          disabled={disabled || (isExceptionOpen && Boolean(savedDraft?.first))}
                           value={draft.first}
                           onChange={(event) =>
                             {
@@ -737,7 +801,7 @@ export function BolaoApp() {
                       <label className="grid gap-1 text-sm font-semibold text-stone-700">
                         2º colocado
                         <select
-                          disabled={disabled}
+                          disabled={disabled || (isExceptionOpen && Boolean(savedDraft?.second))}
                           value={draft.second}
                           onChange={(event) =>
                             {
@@ -776,6 +840,8 @@ export function BolaoApp() {
             <div className="grid gap-4">
               {knockoutStages.map((stage) => {
                 const selected = knockoutDrafts[stage.key] ?? [];
+                const savedSelected = savedKnockoutDrafts[stage.key] ?? [];
+                const stageCanEdit = canEditKnockoutStage(stage.key);
                 return (
                   <article key={stage.key} className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -787,7 +853,7 @@ export function BolaoApp() {
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         <button
-                          disabled={!participant || isLocked || savingStage === stage.key}
+                          disabled={!stageCanEdit || savingStage === stage.key}
                           onClick={() => saveKnockoutStage(stage.key)}
                           className="h-10 w-28 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                         >
@@ -801,8 +867,11 @@ export function BolaoApp() {
                     <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       {teams.map((team) => {
                         const checked = selected.includes(team.name);
+                        const isSavedSelection = savedSelected.includes(team.name);
                         const disabled =
-                          !participant || isLocked || (!checked && selected.length >= stage.limit);
+                          !stageCanEdit ||
+                          (isExceptionOpen && isSavedSelection) ||
+                          (!checked && selected.length >= stage.limit);
                         return (
                           <label
                             key={`${stage.key}-${team.name}`}

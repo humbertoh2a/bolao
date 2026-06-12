@@ -1,16 +1,9 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdmin } from "@/lib/supabase-admin";
-import { getStageLimit, isKnockoutStage, predictionLockAt } from "@/lib/knockout";
-
-function predictionsAreOpen() {
-  return Date.now() < new Date(predictionLockAt).getTime();
-}
+import { getStageLimit, isKnockoutStage } from "@/lib/knockout";
+import { getPredictionAccess } from "@/lib/prediction-access";
 
 export async function POST(request: Request) {
-  if (!predictionsAreOpen()) {
-    return NextResponse.json({ error: "Apostas encerradas." }, { status: 403 });
-  }
-
   const body = await request.json();
   const participantId = String(body.participant_id ?? "");
   const stage = String(body.stage ?? "");
@@ -20,6 +13,11 @@ export async function POST(request: Request) {
 
   if (!participantId || !isKnockoutStage(stage)) {
     return NextResponse.json({ error: "Participante e fase sao obrigatorios." }, { status: 400 });
+  }
+
+  const access = getPredictionAccess(participantId);
+  if (!access.canSave) {
+    return NextResponse.json({ error: "Apostas encerradas." }, { status: 403 });
   }
 
   const limit = getStageLimit(stage);
@@ -40,6 +38,28 @@ export async function POST(request: Request) {
 
     if ((validTeams ?? []).length !== teams.length) {
       return NextResponse.json({ error: "Lista de selecoes invalida." }, { status: 400 });
+    }
+  }
+
+  if (access.isExceptionOpen) {
+    const { data: existingPredictions, error: existingPredictionsError } = await supabase
+      .from("knockout_predictions")
+      .select("team_name")
+      .eq("participant_id", participantId)
+      .eq("stage", stage);
+
+    if (existingPredictionsError) {
+      return NextResponse.json({ error: existingPredictionsError.message }, { status: 500 });
+    }
+
+    const existingTeams = new Set((existingPredictions ?? []).map((prediction) => prediction.team_name));
+
+    if (existingTeams.size >= limit) {
+      return NextResponse.json({ error: "Esta fase ja foi preenchida." }, { status: 403 });
+    }
+
+    if (![...existingTeams].every((team) => teams.includes(team))) {
+      return NextResponse.json({ error: "Selecoes ja preenchidas nao podem ser alteradas." }, { status: 403 });
     }
   }
 

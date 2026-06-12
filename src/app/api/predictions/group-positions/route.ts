@@ -1,16 +1,8 @@
 import { NextResponse } from "next/server";
-import { predictionLockAt } from "@/lib/knockout";
+import { getPredictionAccess } from "@/lib/prediction-access";
 import { createSupabaseAdmin } from "@/lib/supabase-admin";
 
-function predictionsAreOpen() {
-  return Date.now() < new Date(predictionLockAt).getTime();
-}
-
 export async function POST(request: Request) {
-  if (!predictionsAreOpen()) {
-    return NextResponse.json({ error: "Apostas encerradas." }, { status: 403 });
-  }
-
   const body = await request.json();
   const participantId = String(body.participant_id ?? "");
   const groupName = String(body.group_name ?? "").trim();
@@ -19,6 +11,11 @@ export async function POST(request: Request) {
 
   if (!participantId || !groupName || !firstPlace || !secondPlace) {
     return NextResponse.json({ error: "Participante, grupo, 1º e 2º sao obrigatorios." }, { status: 400 });
+  }
+
+  const access = getPredictionAccess(participantId);
+  if (!access.canSave) {
+    return NextResponse.json({ error: "Apostas encerradas." }, { status: 403 });
   }
 
   if (firstPlace === secondPlace) {
@@ -39,6 +36,33 @@ export async function POST(request: Request) {
   const groupTeams = new Set((matches ?? []).flatMap((match) => [match.home_team, match.away_team]));
   if (!groupTeams.has(firstPlace) || !groupTeams.has(secondPlace)) {
     return NextResponse.json({ error: "Selecoes invalidas para este grupo." }, { status: 400 });
+  }
+
+  if (access.isExceptionOpen) {
+    const { data: existingPredictions, error: existingPredictionsError } = await supabase
+      .from("group_position_predictions")
+      .select("position, team_name")
+      .eq("participant_id", participantId)
+      .eq("group_name", groupName);
+
+    if (existingPredictionsError) {
+      return NextResponse.json({ error: existingPredictionsError.message }, { status: 500 });
+    }
+
+    const existingByPosition = new Map(
+      (existingPredictions ?? []).map((prediction) => [prediction.position, prediction.team_name]),
+    );
+
+    if (existingByPosition.has(1) && existingByPosition.has(2)) {
+      return NextResponse.json({ error: "Classificacao deste grupo ja foi preenchida." }, { status: 403 });
+    }
+
+    if (
+      (existingByPosition.has(1) && existingByPosition.get(1) !== firstPlace) ||
+      (existingByPosition.has(2) && existingByPosition.get(2) !== secondPlace)
+    ) {
+      return NextResponse.json({ error: "Classificacao ja preenchida nao pode ser alterada." }, { status: 403 });
+    }
   }
 
   const { error: deleteError } = await supabase

@@ -80,6 +80,14 @@ function sameSelection(left: string[], right: string[]) {
   return leftSorted.every((value, index) => value === rightSorted[index]);
 }
 
+function isSameLocalDate(left: Date, right: Date) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
 export function BolaoApp() {
   const [participant, setParticipant] = useState<{ id: string; name: string } | null>(null);
   const [name, setName] = useState("");
@@ -112,6 +120,10 @@ export function BolaoApp() {
     () => matches.filter((match) => match.stage === "Fase de grupos"),
     [matches],
   );
+  const todayMatches = useMemo(() => {
+    const today = new Date();
+    return groupStageMatches.filter((match) => isSameLocalDate(new Date(match.kickoff_at), today));
+  }, [groupStageMatches]);
   const groupedMatches = useMemo(() => groupMatches(groupStageMatches), [groupStageMatches]);
   const teamsByGroup = useMemo(() => groupTeams(groupStageMatches), [groupStageMatches]);
   const completion = useMemo(() => {
@@ -540,6 +552,78 @@ export function BolaoApp() {
     }
   }
 
+  function renderMatchPredictionCard(match: Match) {
+    const draft = drafts[match.id] ?? { home: "", away: "" };
+    const disabled = !canEditMatch(match);
+
+    return (
+      <article key={match.id} className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-stone-500">
+              <span>Jogo {match.match_number}</span>
+              <span>{matchDateLabel(match.kickoff_at)}</span>
+            </div>
+            <p className="mt-2 text-lg font-bold">
+              {formatTeamName(match.home_team)} <span className="text-stone-400">x</span>{" "}
+              {formatTeamName(match.away_team)}
+            </p>
+            <p className="mt-1 text-sm text-stone-500">{match.stadium}</p>
+            {match.status === "finished" ? (
+              <p className="mt-2 text-sm font-semibold text-emerald-800">
+                Resultado: {match.home_score} x {match.away_score}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="flex items-start gap-2">
+            <input
+              aria-label={`Palpite ${formatTeamName(match.home_team)}`}
+              disabled={disabled}
+              value={draft.home}
+              onChange={(event) => {
+                setDrafts((current) => ({
+                  ...current,
+                  [match.id]: { ...draft, home: event.target.value },
+                }));
+                setGroupMatchStatuses((current) => ({ ...current, [match.id]: "dirty" }));
+              }}
+              className="h-11 w-14 rounded-md border border-stone-300 text-center text-sm font-bold outline-none ring-emerald-600 focus:ring-2 disabled:bg-stone-100"
+              inputMode="numeric"
+            />
+            <span className="font-bold text-stone-400">x</span>
+            <input
+              aria-label={`Palpite ${formatTeamName(match.away_team)}`}
+              disabled={disabled}
+              value={draft.away}
+              onChange={(event) => {
+                setDrafts((current) => ({
+                  ...current,
+                  [match.id]: { ...draft, away: event.target.value },
+                }));
+                setGroupMatchStatuses((current) => ({ ...current, [match.id]: "dirty" }));
+              }}
+              className="h-11 w-14 rounded-md border border-stone-300 text-center text-sm font-bold outline-none ring-emerald-600 focus:ring-2 disabled:bg-stone-100"
+              inputMode="numeric"
+            />
+            <div className="flex flex-col items-end gap-1">
+              <button
+                disabled={disabled || draft.saving}
+                onClick={() => savePrediction(match)}
+                className="h-11 w-24 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+              >
+                {draft.saving ? "Salvando" : "Salvar"}
+              </button>
+              <span className={`h-4 whitespace-nowrap text-right text-xs font-semibold leading-4 ${statusClassName(groupMatchStatuses[match.id])}`}>
+                {statusLabel(groupMatchStatuses[match.id])}
+              </span>
+            </div>
+          </div>
+        </div>
+      </article>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#f7f3ea] text-stone-950">
       <section className="border-b border-stone-200 bg-white">
@@ -652,6 +736,25 @@ export function BolaoApp() {
         <section className="space-y-8">
           <section className="space-y-5">
             <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold">Apostas de hoje</h2>
+              <span className="text-sm text-stone-600">{todayMatches.length} jogos</span>
+            </div>
+
+            {loading ? <p>Carregando jogos de hoje...</p> : null}
+
+            {!loading && todayMatches.length === 0 ? (
+              <p className="rounded-lg border border-stone-200 bg-white p-4 text-sm text-stone-500 shadow-sm">
+                Nenhum jogo hoje.
+              </p>
+            ) : null}
+
+            <div className="grid gap-3">
+              {todayMatches.map((match) => renderMatchPredictionCard(match))}
+            </div>
+          </section>
+
+          <section className="space-y-5">
+            <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold">Fase de grupos</h2>
               <span className="text-sm text-stone-600">{groupStageMatches.length} partidas</span>
             </div>
@@ -662,80 +765,7 @@ export function BolaoApp() {
               <div key={group} className="space-y-3">
                 <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-stone-500">{group}</h3>
                 <div className="grid gap-3">
-                  {groupMatches.map((match) => {
-                    const draft = drafts[match.id] ?? { home: "", away: "" };
-                    const disabled = !canEditMatch(match);
-                    return (
-                      <article key={match.id} className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
-                        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-stone-500">
-                              <span>Jogo {match.match_number}</span>
-                              <span>{matchDateLabel(match.kickoff_at)}</span>
-                            </div>
-                            <p className="mt-2 text-lg font-bold">
-                              {formatTeamName(match.home_team)} <span className="text-stone-400">x</span>{" "}
-                              {formatTeamName(match.away_team)}
-                            </p>
-                            <p className="mt-1 text-sm text-stone-500">{match.stadium}</p>
-                            {match.status === "finished" ? (
-                              <p className="mt-2 text-sm font-semibold text-emerald-800">
-                                Resultado: {match.home_score} x {match.away_score}
-                              </p>
-                            ) : null}
-                          </div>
-
-                          <div className="flex items-start gap-2">
-                            <input
-                              aria-label={`Palpite ${formatTeamName(match.home_team)}`}
-                              disabled={disabled}
-                              value={draft.home}
-                              onChange={(event) =>
-                                {
-                                  setDrafts((current) => ({
-                                    ...current,
-                                    [match.id]: { ...draft, home: event.target.value },
-                                  }));
-                                  setGroupMatchStatuses((current) => ({ ...current, [match.id]: "dirty" }));
-                                }
-                              }
-                              className="h-11 w-14 rounded-md border border-stone-300 text-center text-sm font-bold outline-none ring-emerald-600 focus:ring-2 disabled:bg-stone-100"
-                              inputMode="numeric"
-                            />
-                            <span className="font-bold text-stone-400">x</span>
-                            <input
-                              aria-label={`Palpite ${formatTeamName(match.away_team)}`}
-                              disabled={disabled}
-                              value={draft.away}
-                              onChange={(event) =>
-                                {
-                                  setDrafts((current) => ({
-                                    ...current,
-                                    [match.id]: { ...draft, away: event.target.value },
-                                  }));
-                                  setGroupMatchStatuses((current) => ({ ...current, [match.id]: "dirty" }));
-                                }
-                              }
-                              className="h-11 w-14 rounded-md border border-stone-300 text-center text-sm font-bold outline-none ring-emerald-600 focus:ring-2 disabled:bg-stone-100"
-                              inputMode="numeric"
-                            />
-                            <div className="flex flex-col items-end gap-1">
-                              <button
-                                disabled={disabled || draft.saving}
-                                onClick={() => savePrediction(match)}
-                                className="h-11 w-24 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-300"
-                              >
-                                {draft.saving ? "Salvando" : "Salvar"}
-                              </button>
-                              <span className={`h-4 whitespace-nowrap text-right text-xs font-semibold leading-4 ${statusClassName(groupMatchStatuses[match.id])}`}>
-                                {statusLabel(groupMatchStatuses[match.id])}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })}
+                  {groupMatches.map((match) => renderMatchPredictionCard(match))}
                 </div>
               </div>
             ))}
